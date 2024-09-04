@@ -1,0 +1,179 @@
+---
+title: "MLZ_Request"
+author: "Holden"
+date: "2024-08-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+library(tidyverse)
+library(sf)
+library(ggrepel)
+```
+
+## Map Stuff
+```{r}
+breed_months <- c("MAR", "APR", "MAY", "JUN", "JUL")
+winter_months <-c("NOV", "DEC", "JAN", "FEB")
+
+domain <- c(
+  xmin = -120, 
+  xmax = -90,
+  ymin = 15,
+  ymax = 35
+)
+
+breeding_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "breeding") %>% 
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+wintering_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "nonbreeding") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+coastlines_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_coastline.shp") %>% 
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+countries_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_0_boundary_lines_land.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+states_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+MX_shp <- read_sf("../genoscape_maps/shapefiles/mexican-states.shp")
+```
+
+
+## Import Sample Selections
+```{r}
+MLZ_select_breeding <- read.csv("MLZ_breeding.csv")
+MLZ_select_winter <- read.csv("MLZ_Winter.csv")
+
+
+```
+
+## 
+```{r}
+mapb <- ggplot() +
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "coral", lwd = 0 , alpha = 0.7) +
+  theme_bw() +
+  xlim(-120, -90) + 
+  ylim(15, 35) +
+  geom_point(data = subset(MLZ_select_breeding, Include == 'y'),
+             aes(x = dec_long, y = dec_lat),
+             color = "black",
+             size = 4, alpha = 0.4) +
+coord_sf()
+mapb
+
+mapw <- ggplot() +
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = wintering_range, fill = "lightsteelblue2", lwd = 0, alpha = 0.7) +
+  theme_bw() +
+  
+  xlim(-120, -90) + 
+  ylim(15, 35) +
+  geom_point(data = subset(MLZ_select_winter, Priority == 'y'),
+             aes(x = dec_long, y = dec_lat),
+             color = "black",
+             size = 4, alpha = 0.4) +
+coord_sf()
+mapw
+```
+```{r}
+
+# Assume k-means clustering is already performed with more clusters
+num_clusters <- 7  # Adjust the number of clusters as needed
+coords_breeding <- cbind(MLZ_select_breeding$dec_long, MLZ_select_breeding$dec_lat)
+kmeans_breeding <- kmeans(coords_breeding, centers = num_clusters)
+
+# Add cluster labels to MLZ_select_breeding
+MLZ_select_breeding$cluster <- as.factor(kmeans_breeding$cluster)
+
+# Identify overlapping points
+MLZ_select_breeding <- MLZ_select_breeding %>%
+  group_by(dec_long, dec_lat) %>%
+  mutate(count = n()) %>%
+  ungroup()
+
+# Label overlapping points and others
+MLZ_select_breeding$label <- ifelse(MLZ_select_breeding$count > 1, MLZ_select_breeding$count, "1")
+
+# Calculate the number of points in each cluster for the labels
+cluster_counts <- MLZ_select_breeding %>%
+  group_by(cluster) %>%
+  summarize(count = n_distinct(dec_long, dec_lat)) %>%
+  ungroup()
+
+cluster_centers <- as.data.frame(kmeans_breeding$centers)
+cluster_centers$cluster <- as.factor(1:num_clusters)  # Add cluster column for labeling
+
+# Map with k-means clustering and labels with lines pointing to clusters
+mapb_clust <- ggplot() +
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "coral", lwd = 0 , alpha = 0.7) +
+  theme_bw() +
+  xlim(-120, -90) + 
+  ylim(15, 35) +
+  geom_point(data = subset(MLZ_select_breeding, Include == 'y'), 
+             aes(x = dec_long, y = dec_lat, color = cluster, size = 3),
+             alpha = 0.6) +
+  scale_color_manual(values = rainbow(num_clusters)) +  # Adjust color scheme as needed
+  geom_text(data = subset(MLZ_select_breeding, Include == 'y') %>% filter(count > 1),  # Add labels for overlapping points
+            aes(x = dec_long, y = dec_lat, label = label),
+            color = "black", size = 3, vjust = 0.5, hjust = 0.5) +
+  coord_sf() +
+  guides(color = "none")  # Remove legend for cluster color
+
+mapb_clust
+
+```
+## create a final list of samples to request sent to MLZ
+```{r}
+library(openxlsx)
+
+MLZ_bfilt <- MLZ_select_breeding %>% filter (Include == "y")
+MLZ_wfilt  <- MLZ_select_winter %>% filter (Priority == "y")
+MLZ_sample_request <- bind_rows(MLZ_bfilt, MLZ_wfilt) %>% select(-Include, -Priority, -Why, -cluster, -count, -label)
+
+write.xlsx(MLZ_sample_request, file = "../LOSH_MLZ_BGP_SampleRequest.xlsx")
+
+mapc <- ggplot() +
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "purple4", lwd = 0 , alpha = 0.3) +
+  theme_bw() +
+  xlim(-120, -90) + 
+  ylim(15, 35) +
+  geom_point(data = MLZ_sample_request,
+             aes(x = dec_long, y = dec_lat),
+             color = "black",
+             size = 4, alpha = 0.4) +
+coord_sf()
+mapc
+
+
+```
