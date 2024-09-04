@@ -1,0 +1,179 @@
+---
+title: "Winter Sampling"
+output: html_notebook
+---
+
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(sf)
+library(ggrepel)
+```
+
+First read in costline vectors
+
+```{r}
+coastlines <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_coastline.shp") %>% 
+  st_set_crs(st_crs(4326))
+
+```
+Now, let's just crop out the part that we want.  This is somewhat key:
+right here we will define the extent in lat-long of the region that
+we want to plot:
+```{r}
+
+domain <- c(
+  xmin = -130, 
+  xmax = -65,
+  ymin = 10,
+  ymax = 60
+)
+
+coast_cropped <- st_crop(coastlines, domain)
+
+```
+
+Then plot the cropped part:
+```{r}
+ggplot(coast_cropped) + 
+  geom_sf() +
+  coord_sf()
+```
+
+### All the lines
+
+OK, that was pretty reasonable.  Now crop all the lines to `domain` and plot
+them, and put the genoscape on top of that, too.
+```{r}
+countries_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_0_boundary_lines_land.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+states_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+nonbreeding_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "nonbreeding")
+
+```
+
+Now, plot it all.  Notice we do it by just adding layers.
+```{r}
+mapg <- ggplot() +
+  geom_sf(data = coast_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = nonbreeding_range, fill = "lightsteelblue2", lwd = 0 , alpha = 0.7) +
+  theme_bw() 
+
+mapg +
+  coord_sf() 
+```
+
+Now for sample locations
+
+## Import metadata
+```{r}
+meta <- read.csv("../meta/NewLoshSamples.csv")
+database <- read.csv("../meta/database_corrected.csv")
+database_ubreeding <- database %>% 
+  filter(Breeding == 'U')
+database
+```
+
+## Any transformations
+```{r}
+winter_months_relaxed <- c("NOV", "DEC", "JAN", "FEB")
+
+database <- database %>%
+  mutate(CollectionDate = as.Date(CollectionDate, format = "%m/%d/%Y"),
+  Month = toupper(format(CollectionDate, "%b")))
+
+database_winter <- database %>% 
+  filter(Breeding == 'N', Sequenced == 'N') %>%
+  #estimate lat longs
+  mutate(Lat = if_else(CityTown == "Myrtle Beach" & is.na(Lat), 33.6954, Lat),
+         Long = if_else(CityTown == "Myrtle Beach" & is.na(Long), -78.8802, Long)) %>% 
+  mutate(Lat = if_else(CityTown == "Conway" & is.na(Lat), 33.8360, Lat),
+         Long = if_else(CityTown == "Conway" & is.na(Long), -79.0478, Long)) %>% 
+  mutate(Lat = if_else(State == "WV" & is.na(Lat), 37.6, Lat),
+         Long = if_else(State == "WV" & is.na(Long), -80.5, Long)) %>% 
+  filter(Month %in% winter_months_relaxed)
+
+meta_winter <- meta %>%
+  filter(Month %in% winter_months_relaxed)
+
+```
+
+## Import Chabot 03.11.24 Feathers
+```{r}
+amy_winter_database <- read.csv("../meta/Amy_LOSH_Feathers_SentMar24_SortedByHFJul24.csv") %>%
+  filter(Retrix_Calamus_Num >= 1, Retrix_Calamus_Num != "Missing") %>%
+  mutate_at(vars(Latitude, Longitude), as.numeric) %>% 
+  mutate(Longitude = if_else(Longitude > 0, -Longitude, Longitude)) %>% 
+  mutate(Longitude = if_else(State == "Jalisco", -103.3473, Longitude)) %>%  # coordinates for guadalajara
+  mutate(Longitude = if_else(State == "Michoacan", -101.9900, Longitude)) %>% # coordinates for michoacan centroid
+  mutate(Longitude = if_else(State == "Aguascalientes", -102.2916, Longitude)) %>% # coordinates aguascalientes
+  mutate(Sample.Date = as.Date(Sample.Date, format = "%Y/%m/%d"),
+         Month = toupper(format(Sample.Date, "%b"))) %>% 
+  filter(Month %in% winter_months_relaxed | Season == "Wintering")
+  
+```
+
+
+```{r}
+
+mapg <- ggplot() +
+  geom_sf(data = coast_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = nonbreeding_range, fill = "lightsteelblue2", lwd = 0 , alpha = 0.8) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  xlim(-130, -65) + 
+  ylim(10, 60) +
+  geom_point(data = meta_winter,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.5) +
+  geom_point(data = database_winter,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.5) +
+  geom_point(data = amy_winter_database,
+             aes(x = Longitude, y = Latitude),
+             color = "black",
+             size = 2.5, alpha = 0.5) +
+  geom_point(data = subset(MLZ_winter, state_prov == "San Luis Potosi"),
+             aes(x = dec_long, y = dec_lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_winter, state_prov == "Zacatecas"),
+             aes(x = dec_long, y = dec_lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_winter, state_prov == "Sinaloa"),
+             aes(x = dec_long, y = dec_lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_winter, state_prov == "Guanajuato"),
+             aes(x = dec_long, y = dec_lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_winter, state_prov == "Morelos"),
+             aes(x = dec_long, y = dec_lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_winter, state_prov == "Queretaro"),
+             aes(x = dec_long, y = dec_lat),
+             color = "red",
+             size = 2.5, alpha = 0.3) +
+  coord_sf()
+
+mapg
+#ggsave("losh_winter_database_plusMLZ_0724.svg", plot = mapg)
+```
