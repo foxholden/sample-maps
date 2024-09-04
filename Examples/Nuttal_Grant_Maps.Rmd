@@ -1,0 +1,164 @@
+---
+title: "Nuttal_Grant_Maps"
+author: "Holden"
+date: "2024-09-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+breed_months <- c("MAR", "APR", "MAY", "JUN", "JUL")
+winter_months <-c("NOV", "DEC", "JAN", "FEB")
+
+
+# Set the crop limit for your map layers
+
+domain <- c(
+  xmin = -130, 
+  xmax = -65,
+  ymin = 10,
+  ymax = 60
+)
+
+# ebird range maps downloaded from ebird
+
+breeding_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "breeding") %>% 
+  st_crop(domain) %>%  # crop to domain size
+  st_set_crs(st_crs(4326)) # set coordinate reference system (4326 is the projection I use)
+
+wintering_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "nonbreeding") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+## sf map layers downloaded from Natural Earth: https://www.naturalearthdata.com/
+
+# coastlines
+
+coastlines_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_coastline.shp") %>% 
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+# country boundaries
+
+countries_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_0_boundary_lines_land.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+# state boundaries
+
+states_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+
+```
+
+## Import metadata and transform
+
+```{r}
+# define wintering and breeding seasons to filter samples by season using collection dates.
+breed_months <- c("MAR", "APR", "MAY", "JUN", "JUL")
+winter_months <-c("NOV", "DEC", "JAN", "FEB")
+
+
+# import library meta data
+lib_master <- read.csv("../meta/LOSH_Lib_Master_090124.csv")
+lib_master$Month <- toupper(format(as.Date(lib_master$CollectionDate, format = "%m/%d/%Y"), "%b")) # create a column Month, for filtering based on CollectionDate column
+  
+# use a plink .fam file to extract sample IDs from sequenced data set, where non-breeding, too low coverage, and related inds were removed)
+inds <- read_delim("../analysis/admix/pass-maf-0.05-SNP-5miss-187-5xKING-rm-scaf-lth10-gl-impute4.1-excl-LD.fam", col_names = FALSE, delim = " ") %>% 
+  rename(BGP_ID = X1) %>% 
+  select(BGP_ID)
+
+# filter, filter, filter
+lib1_IN_breeding <- lib_master %>% filter(BGP_ID %in% inds$BGP_ID) # filtered first sequencing round
+
+lib2_breeding <- lib_master %>% filter (FullLibraryName == "LOSH 003" | FullLibraryName == "LOSH 004", Month %in% breed_months) # second round breeding samples
+
+lib2_winter <- lib_master %>% filter (FullLibraryName == "LOSH 003" | FullLibraryName == "LOSH 004", Month %in% winter_months) # round 2 winter
+
+libs <- bind_rows(lib1_IN_breeding, lib2_breeding) # combine breeding round 2 and round 1 (all breeders from 2 runs actually)
+```
+
+## More metadata import and filtering
+```{r}
+MLZ <- read.csv("../meta/MLZ_Lanius_data.csv")
+MLZ$Month <- substr(MLZ$verbatim_date, 4, 6)
+breed_months <- c("MAR", "APR", "MAY", "JUN", "JUL")
+MLZ_winter <- MLZ %>% filter(Month %in% winter_months_relaxed)
+MLZ_breeding <- MLZ %>% filter(Month %in% breed_months)
+
+sdnhm_breeding <- read.csv("../meta/SDNHM_Request.csv") %>% filter(Season == "Breeding")
+sdnhm_winter <- read.csv("../meta/SDNHM_Request.csv") %>% filter(Season == "Winter")
+
+# there's a lot more winter data plotted in the winter map from elsewhere in this R session...
+```
+
+
+```{r}
+mapb <- ggplot() +
+  #map layers
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "coral", lwd = 0 , alpha = 0.7) + #ebird range map
+  theme_bw() +
+  #crop to
+  xlim(-130, -70) +
+  ylim(10, 60) +
+  # plot points by lat longs
+  geom_point(data = libs,
+             aes(x = Long, y = Lat),
+             color = "green",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = sdnhm_breeding,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = subset(MLZ_select_breeding, Include == 'y'), # only plot points that are samples you want to include (Include == 'y')
+             aes(x = dec_long, y = dec_lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+coord_sf()
+mapb
+
+mapw <- ggplot() +
+  geom_sf(data = coastlines_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = wintering_range, fill = "lightsteelblue2", lwd = 0, alpha = 0.7) +
+  theme_bw() +
+  xlim(-130, -70) + 
+  ylim(10, 60) +
+  geom_point(data = subset(MLZ_select_winter, Priority == 'y'),
+             aes(x = dec_long, y = dec_lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = meta_winter,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = database_winter,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = amy_winter_database,
+             aes(x = Longitude, y = Latitude),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+  geom_point(data = sdnhm_winter,
+             aes(x = Long, y = Lat),
+             color = "black",
+             size = 2.5, alpha = 0.3) +
+coord_sf()
+mapw
+# save maps as .svg
+# ggsave("losh_winter.svg", plot = mapw)
+# ggsave("losh_breeding.svg", plot = mapb)
+```
