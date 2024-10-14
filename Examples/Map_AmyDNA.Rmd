@@ -1,0 +1,121 @@
+---
+title: "Mapping_AmyDNAShipment"
+author: "Holden"
+date: "2024-10-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+Welcome!! The goal here is to map all of the samples that Amy Chabot sent us in the mail. This includes DNA, Feathers, and clipped feathers where no usable sample exists.
+
+
+Let's start by loading packages and reading in the metadata
+
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(sf)
+amy_082124 <- read.xlsx("../meta/Shrike_Tissue_Database_082124_toCSU_Sorted.xlsx")
+cecilia_notes <- read.xlsx("../meta/Shrike_Tissue_Database_082124_toCSU_Sorted.xlsx", sheet = 2) #this is the sheet that Cecilia annotated for us :)
+
+```
+
+Nice work! you loaded both the working sheet and the original metadata sheet let's make any necessary transformation here
+
+```{r}
+cecilia_notes <- cecilia_notes %>% rename(Alt_Box = `Box.-.to.combine`)  # quick rename a col
+amy_082124 <- amy_082124 %>% select(-To.CSU, -Box, -`Box.-.to.combine`) %>% # remove place information cols, we will get this information from Cecilia's working sheet
+  select("LLU#", Band, Left.Leg, Right.Leg, Sample.Date, Year, "Province/State", Country, Datum, Zone, UTM.Easting, UTM.Northing, Latitude, Longitude, Collector, Season)
+amy_082124_combined <- left_join(amy_082124, cecilia_notes, by = "LLU#") %>% #join the two
+  filter(`DNA.#` >= 1 | `Feather.#` >= 1) #just pick samples where there are dna or feathers left
+
+amy_082124_combined$Longitude <- as.numeric(amy_082124_combined$Longitude)
+amy_082124_combined$Longitude <- -abs(amy_082124_combined$Longitude)
+amy_082124_combined$Latitude <- as.numeric(amy_082124_combined$Latitude)
+
+
+
+```
+
+Let's map! First read in coastline vectors from Natural Earth https://www.naturalearthdata.com/
+```{r}
+coastlines <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_coastline.shp") %>% 
+  st_set_crs(st_crs(4326))
+```
+
+Now, let's just crop out the part that we want.  This is somewhat key:
+right here we will define the extent in lat-long of the region that
+we want to plot:
+```{r}
+
+domain <- c(
+  xmin = -130, 
+  xmax = -65,
+  ymin = 10,
+  ymax = 60
+)
+coast_cropped <- st_crop(coastlines, domain)
+
+```
+
+Then plot the cropped part:
+```{r}
+ggplot(coast_cropped) + 
+  geom_sf() +
+  coord_sf()
+```
+
+OK, that looks good. Now crop all the other vector lines including the shrike range from ebird (https://science.ebird.org/en/status-and-trends/species/logshr/downloads) to `domain`
+```{r}
+countries_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_0_boundary_lines_land.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+states_cropped <- read_sf("../genoscape_maps/shapefiles/ne_shapefiles/ne_10m_admin_1_states_provinces_lines.shp") %>%
+  st_crop(domain) %>% 
+  st_set_crs(st_crs(4326))
+
+breeding_range <- read_sf("../genoscape_maps/shapefiles/LOSH/logshr_range_2021.gpkg") %>%
+  filter(season == "nonbreeding")
+```
+
+Plot everything!
+```{r}
+mapg <- ggplot() +
+  geom_sf(data = coast_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "lightsteelblue2", lwd = 0 , alpha = 0.7) +
+  theme_bw() +
+  coord_sf()
+
+mapg 
+```
+
+Ok your base map is looking pretty good. Let's see where the samples amy sent are from
+
+```{r}
+mapg <- ggplot() +
+  geom_sf(data = coast_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = countries_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = states_cropped, fill = "grey97", color = "grey") +
+  geom_sf(data = breeding_range, fill = "lightsteelblue2", lwd = 0 , alpha = 0.7) +
+  theme_bw() +
+  xlab("Longitude") +
+  ylab("Latitude") +
+  xlim(-130, -65) + 
+  ylim(10, 60) +
+  geom_point(data = filter(amy_082124_combined, Season == "Wintering"),
+           aes(x = Longitude, y = Latitude),
+           color = "black",
+           size = 2, alpha = 0.5)
+
+mapg + coord_sf()
+```
+
+
